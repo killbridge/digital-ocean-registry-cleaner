@@ -1,62 +1,21 @@
 # DigitalOcean Container Registry Cleaner
 
-A tool to clean up old Docker images from your DigitalOcean Container Registry, keeping only the most recent tags. Available as both a Ruby script and a GitHub Actions workflow.
+A GitHub Actions workflow to automatically clean up old Docker images from your DigitalOcean Container Registry, keeping only the most recent tags.
 
 ## Prerequisites
 
-### For Ruby Script
-- Ruby installed on your system
-- `doctl` CLI tool installed and authenticated with DigitalOcean
-- Access to your DigitalOcean Container Registry
-
-### For GitHub Actions
 - GitHub repository with Actions enabled  
-- DigitalOcean personal access token with registry read/write permissions
+- DigitalOcean personal access token with registry permissions
 - No local dependencies required
-
-## Ruby Script Usage
-
-```bash
-./registry_cleaner.rb [options]
-```
-
-### Options
-
-- `-d, --dry-run`: Run in dry-run mode (shows what would be deleted without actually deleting)
-- `-k, --keep-count COUNT`: Number of recent tags to keep (default: 1)
-- `-a, --min-age-days DAYS`: Minimum age in days before deletion (default: 7)
-- `-r, --repository REPO`: Specific repository to clean (can be specified multiple times)
-- `-h, --help`: Show help message
-
-### Examples
-
-**Dry run on all repositories (recommended first step):**
-```bash
-./registry_cleaner.rb --dry-run
-```
-
-**Keep the last 3 tags, delete anything older than 30 days:**
-```bash
-./registry_cleaner.rb --keep-count 3 --min-age-days 30
-```
-
-**Clean specific repositories only:**
-```bash
-./registry_cleaner.rb --repository myapp/web --repository myapp/worker
-```
-
-**Production cleanup (keep 1 latest tag, delete tags older than 7 days):**
-```bash
-./registry_cleaner.rb
-```
 
 ## How it works
 
 1. Fetches all repositories from your registry (or uses specified ones)
 2. For each repository, lists all tags sorted by update time
-3. Keeps the most recent tags based on `--keep-count`
-4. Also keeps any tags younger than `--min-age-days`
+3. Keeps the most recent tags based on `keep_count`
+4. Also keeps any tags younger than `min_age_days`
 5. Deletes all other tags
+6. Optionally runs garbage collection to reclaim disk space
 
 ## Safety features
 
@@ -64,16 +23,13 @@ A tool to clean up old Docker images from your DigitalOcean Container Registry, 
 - Minimum age protection prevents deletion of recent images
 - Tags are sorted by update time, not creation time
 - Each deletion is logged
+- Checks for active garbage collection before starting a new one
 
 ## Note for Kamal users
 
-Since you're using Kamal for deployments, this script will help maintain a clean registry while ensuring your latest deployed images are always available. The default settings (keep 1 tag, 7 days minimum age) should work well for most Kamal deployments.
+Since you're using Kamal for deployments, this workflow helps maintain a clean registry while ensuring your latest deployed images are always available. The default settings (keep 1 tag, 7 days minimum age) work well for most Kamal deployments.
 
-## GitHub Actions Workflow
-
-This repository also includes a GitHub Actions workflow that provides the same functionality without requiring local dependencies.
-
-### Setup
+## Setup
 
 1. **Create DigitalOcean Access Token**:
    - Go to [DigitalOcean API Tokens](https://cloud.digitalocean.com/account/api/tokens/new)
@@ -92,18 +48,18 @@ This repository also includes a GitHub Actions workflow that provides the same f
    - Ensure GitHub Actions is enabled for your repository
    - The workflow file is located at `.github/workflows/registry-cleaner.yml`
 
-### Usage
+## Usage
 
 The workflow can be triggered in two ways:
 
-#### Automatic Schedule
+### Automatic Schedule
 The workflow runs automatically every day at 2 AM UTC with default settings:
 - Dry run: **false** (will actually delete images)
 - Keep count: 1
 - Minimum age: 7 days
 - Repositories: all
 
-#### Manual Trigger
+### Manual Trigger
 You can manually run the workflow from the GitHub Actions tab:
 
 1. Go to Actions → DigitalOcean Registry Cleaner
@@ -115,7 +71,7 @@ You can manually run the workflow from the GitHub Actions tab:
    - **repositories**: Comma-separated list of specific repositories (leave empty for all)
    - **run_garbage_collection**: Run garbage collection after cleanup (default: true)
 
-### Examples
+## Examples
 
 **Manual dry run:**
 - dry_run: `true`
@@ -129,13 +85,13 @@ You can manually run the workflow from the GitHub Actions tab:
 - min_age_days: `7`
 - repositories: (leave empty for all)
 
-### Monitoring
+## Monitoring
 
 - View workflow runs in the Actions tab of your GitHub repository
 - Each run shows detailed logs of what was kept/deleted
 - Failed runs will trigger GitHub notifications (if enabled)
 
-### Customizing the Schedule
+## Customizing the Schedule
 
 To change the automatic schedule, edit the cron expression in `.github/workflows/registry-cleaner.yml`:
 
@@ -150,23 +106,23 @@ Common examples:
 - `'0 0 1 * *'` - Monthly on the 1st
 - `'0 */6 * * *'` - Every 6 hours
 
-### Garbage Collection
+## Garbage Collection
 
 The workflow includes automatic garbage collection to reclaim disk space after deleting tags:
 
-#### How it Works
+### How it Works
 1. After deleting tags, the workflow checks if garbage collection should run
 2. It verifies no other garbage collection is currently active
 3. If clear, it starts garbage collection with `--include-untagged-manifests`
 4. The process runs asynchronously and may take 15+ minutes
 
-#### Important Notes
+### Important Notes
 - **Registry goes read-only** during garbage collection (pulls work, pushes don't)
 - Only one garbage collection can run at a time per registry
 - Garbage collection only runs if tags were actually deleted (not in dry-run mode)
 - You can disable it by setting `run_garbage_collection: false` in manual runs
 
-#### Why Use Garbage Collection?
+### Why Use Garbage Collection?
 - **Reclaim space**: Deleting tags only removes references; GC actually frees disk space
 - **Remove untagged manifests**: Cleans up orphaned image layers
 - **Optimize registry**: Improves performance by removing unnecessary data
