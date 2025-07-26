@@ -100,6 +100,9 @@ jobs:
           fi
         }
         
+        # Initialize variables
+        TAGS_DELETED=""
+        
         # Print configuration
         echo "Starting DigitalOcean Container Registry cleanup..."
         echo "Mode: $([ "$DRY_RUN" == "true" ] && echo "DRY RUN" || echo "LIVE")"
