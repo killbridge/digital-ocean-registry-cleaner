@@ -2,6 +2,57 @@
 
 A GitHub Actions workflow to automatically clean up old Docker images from your DigitalOcean Container Registry, keeping only the most recent tags.
 
+## Why This Exists
+
+If you're using DigitalOcean Container Registry for continuous deployments (especially with tools like Kamal), you'll quickly accumulate many old image tags that consume storage space and cost money. This workflow automates the cleanup process by:
+
+- **Reducing costs** - DigitalOcean charges for registry storage, so removing old images saves money
+- **Improving performance** - Fewer images mean faster registry operations
+- **Maintaining safety** - Keeps recent images based on count and age policies
+- **Zero maintenance** - Runs automatically on a schedule you define
+
+Built specifically for teams doing frequent deployments who want to keep their registry clean without manual intervention.
+
+## Quick Start
+
+### 1. Fork or Copy This Workflow
+
+**Option A: Fork this repository**
+1. Click the "Fork" button at the top of this page
+2. Create a fork in your GitHub account
+3. Continue with step 2 below
+
+**Option B: Copy just the workflow**
+1. Copy `.github/workflows/registry-cleaner.yml` to your existing repository
+2. Continue with step 2 below
+
+### 2. Create Your DigitalOcean Token
+1. Go to [DigitalOcean API Tokens](https://cloud.digitalocean.com/account/api/tokens/new)
+2. Create a token with these permissions:
+   - **registry** → **read** (View container registries)
+   - **registry** → **delete** (Delete container registries)
+3. Copy the generated token
+
+### 3. Add Token to GitHub Secrets
+1. In your GitHub repository, go to Settings → Secrets and variables → Actions
+2. Click "New repository secret"
+3. Name: `DIGITALOCEAN_ACCESS_TOKEN`
+4. Value: Paste your token from step 2
+5. Click "Add secret"
+
+### 4. Enable and Test
+1. Go to the Actions tab in your repository
+2. If prompted, enable GitHub Actions
+3. Find "DigitalOcean Registry Cleaner" and click it
+4. Click "Run workflow" → "Run workflow" (keep defaults for dry run)
+5. Check the logs to see what would be deleted
+
+### 5. Configure and Deploy
+Once you're happy with the dry run results:
+- The workflow will run automatically every day at 2 AM UTC
+- Or manually trigger it anytime from the Actions tab
+- Customize the schedule or defaults by editing the workflow file
+
 ## Prerequisites
 
 - GitHub repository with Actions enabled  
@@ -132,3 +183,11 @@ To check garbage collection status manually:
 doctl registry garbage-collection get-active
 doctl registry garbage-collection list
 ```
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request for bug fixes or improvements.
+
+## License
+
+This project is open source and available under the [MIT License](LICENSE).
