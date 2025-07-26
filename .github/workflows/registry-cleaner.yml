@@ -27,6 +27,11 @@ on:
         required: false
         type: string
         default: ''
+      run_garbage_collection:
+        description: 'Run garbage collection after cleanup to reclaim space'
+        required: false
+        type: boolean
+        default: true
 
 jobs:
   clean-registry:
@@ -50,12 +55,14 @@ jobs:
           echo "KEEP_COUNT=${{ inputs.keep_count }}" >> $GITHUB_OUTPUT
           echo "MIN_AGE_DAYS=${{ inputs.min_age_days }}" >> $GITHUB_OUTPUT
           echo "REPOSITORIES=${{ inputs.repositories }}" >> $GITHUB_OUTPUT
+          echo "RUN_GARBAGE_COLLECTION=${{ inputs.run_garbage_collection }}" >> $GITHUB_OUTPUT
         else
           # Scheduled run defaults - set dry_run to false for automated runs
           echo "DRY_RUN=false" >> $GITHUB_OUTPUT
           echo "KEEP_COUNT=1" >> $GITHUB_OUTPUT
           echo "MIN_AGE_DAYS=7" >> $GITHUB_OUTPUT
           echo "REPOSITORIES=" >> $GITHUB_OUTPUT
+          echo "RUN_GARBAGE_COLLECTION=true" >> $GITHUB_OUTPUT
         fi
     
     - name: Clean Registry
@@ -86,6 +93,7 @@ jobs:
           else
             if doctl registry repository delete-tag "$repo" "$tag" --force; then
               echo "    Deleted: $tag"
+              TAGS_DELETED="true"
             else
               echo "    Error deleting $tag"
             fi
@@ -150,3 +158,58 @@ jobs:
         
         echo ""
         echo "Cleanup complete!"
+        
+        # Track if any tags were deleted
+        if [[ "$DRY_RUN" != "true" ]] && [[ -n "$TAGS_DELETED" ]]; then
+          echo "TAGS_WERE_DELETED=true" >> $GITHUB_ENV
+        else
+          echo "TAGS_WERE_DELETED=false" >> $GITHUB_ENV
+        fi
+    
+    - name: Check for Active Garbage Collection
+      if: ${{ steps.params.outputs.RUN_GARBAGE_COLLECTION == 'true' && env.TAGS_WERE_DELETED == 'true' }}
+      id: gc_check
+      run: |
+        echo "Checking for active garbage collection..."
+        
+        # Get active GC if any
+        active_gc=$(doctl registry garbage-collection get-active --format ID 2>/dev/null || echo "")
+        
+        if [[ -n "$active_gc" ]]; then
+          echo "Active garbage collection found: $active_gc"
+          echo "ACTIVE_GC_EXISTS=true" >> $GITHUB_OUTPUT
+        else
+          echo "No active garbage collection found"
+          echo "ACTIVE_GC_EXISTS=false" >> $GITHUB_OUTPUT
+        fi
+    
+    - name: Run Garbage Collection
+      if: ${{ steps.params.outputs.RUN_GARBAGE_COLLECTION == 'true' && env.TAGS_WERE_DELETED == 'true' && steps.gc_check.outputs.ACTIVE_GC_EXISTS == 'false' }}
+      run: |
+        echo ""
+        echo "Starting garbage collection to reclaim space..."
+        echo "Note: Registry will be in read-only mode during this process"
+        
+        # Start garbage collection
+        gc_output=$(doctl registry garbage-collection start --include-untagged-manifests --force)
+        echo "$gc_output"
+        
+        # Extract GC UUID from output
+        gc_uuid=$(echo "$gc_output" | grep -oE '[a-f0-9-]{36}' | head -1)
+        
+        if [[ -n "$gc_uuid" ]]; then
+          echo "Garbage collection started with UUID: $gc_uuid"
+          echo ""
+          echo "Note: Garbage collection runs asynchronously and may take 15+ minutes."
+          echo "The registry will be in read-only mode during this time."
+          echo "You can check the status with: doctl registry garbage-collection get-active"
+        else
+          echo "Could not extract garbage collection UUID from output"
+        fi
+    
+    - name: Skip Garbage Collection
+      if: ${{ steps.params.outputs.RUN_GARBAGE_COLLECTION == 'true' && env.TAGS_WERE_DELETED == 'true' && steps.gc_check.outputs.ACTIVE_GC_EXISTS == 'true' }}
+      run: |
+        echo ""
+        echo "Skipping garbage collection - another garbage collection is already active"
+        echo "Only one garbage collection can run at a time per registry"

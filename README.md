@@ -113,6 +113,7 @@ You can manually run the workflow from the GitHub Actions tab:
    - **keep_count**: Number of recent tags to keep
    - **min_age_days**: Minimum age before deletion
    - **repositories**: Comma-separated list of specific repositories (leave empty for all)
+   - **run_garbage_collection**: Run garbage collection after cleanup (default: true)
 
 ### Examples
 
@@ -148,3 +149,30 @@ Common examples:
 - `'0 0 * * 0'` - Weekly on Sunday at midnight
 - `'0 0 1 * *'` - Monthly on the 1st
 - `'0 */6 * * *'` - Every 6 hours
+
+### Garbage Collection
+
+The workflow includes automatic garbage collection to reclaim disk space after deleting tags:
+
+#### How it Works
+1. After deleting tags, the workflow checks if garbage collection should run
+2. It verifies no other garbage collection is currently active
+3. If clear, it starts garbage collection with `--include-untagged-manifests`
+4. The process runs asynchronously and may take 15+ minutes
+
+#### Important Notes
+- **Registry goes read-only** during garbage collection (pulls work, pushes don't)
+- Only one garbage collection can run at a time per registry
+- Garbage collection only runs if tags were actually deleted (not in dry-run mode)
+- You can disable it by setting `run_garbage_collection: false` in manual runs
+
+#### Why Use Garbage Collection?
+- **Reclaim space**: Deleting tags only removes references; GC actually frees disk space
+- **Remove untagged manifests**: Cleans up orphaned image layers
+- **Optimize registry**: Improves performance by removing unnecessary data
+
+To check garbage collection status manually:
+```bash
+doctl registry garbage-collection get-active
+doctl registry garbage-collection list
+```
