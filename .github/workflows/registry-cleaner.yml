@@ -1,0 +1,152 @@
+name: DigitalOcean Registry Cleaner
+
+on:
+  schedule:
+    # Run daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Run in dry-run mode (no deletions)'
+        required: false
+        type: boolean
+        default: true
+      keep_count:
+        description: 'Number of recent tags to keep'
+        required: false
+        type: number
+        default: 1
+      min_age_days:
+        description: 'Minimum age in days before deletion'
+        required: false
+        type: number
+        default: 7
+      repositories:
+        description: 'Comma-separated list of repositories to clean (leave empty for all)'
+        required: false
+        type: string
+        default: ''
+
+jobs:
+  clean-registry:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Install doctl
+      uses: digitalocean/action-doctl@v2
+      with:
+        token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+    
+    - name: Set parameters
+      id: params
+      run: |
+        # Set parameters from inputs or defaults
+        if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+          echo "DRY_RUN=${{ inputs.dry_run }}" >> $GITHUB_OUTPUT
+          echo "KEEP_COUNT=${{ inputs.keep_count }}" >> $GITHUB_OUTPUT
+          echo "MIN_AGE_DAYS=${{ inputs.min_age_days }}" >> $GITHUB_OUTPUT
+          echo "REPOSITORIES=${{ inputs.repositories }}" >> $GITHUB_OUTPUT
+        else
+          # Scheduled run defaults - set dry_run to false for automated runs
+          echo "DRY_RUN=false" >> $GITHUB_OUTPUT
+          echo "KEEP_COUNT=1" >> $GITHUB_OUTPUT
+          echo "MIN_AGE_DAYS=7" >> $GITHUB_OUTPUT
+          echo "REPOSITORIES=" >> $GITHUB_OUTPUT
+        fi
+    
+    - name: Clean Registry
+      env:
+        DRY_RUN: ${{ steps.params.outputs.DRY_RUN }}
+        KEEP_COUNT: ${{ steps.params.outputs.KEEP_COUNT }}
+        MIN_AGE_DAYS: ${{ steps.params.outputs.MIN_AGE_DAYS }}
+        REPOSITORIES: ${{ steps.params.outputs.REPOSITORIES }}
+      run: |
+        #!/bin/bash
+        set -euo pipefail
+        
+        # Function to calculate days between dates
+        days_since() {
+          local timestamp="$1"
+          local now=$(date +%s)
+          local then=$(date -d "$timestamp" +%s 2>/dev/null || date -jf "%Y-%m-%dT%H:%M:%S" "$timestamp" +%s 2>/dev/null)
+          echo $(( (now - then) / 86400 ))
+        }
+        
+        # Function to delete a tag
+        delete_tag() {
+          local repo="$1"
+          local tag="$2"
+          
+          if [[ "$DRY_RUN" == "true" ]]; then
+            echo "    [DRY RUN] Would delete: $tag"
+          else
+            if doctl registry repository delete-tag "$repo" "$tag" --force; then
+              echo "    Deleted: $tag"
+            else
+              echo "    Error deleting $tag"
+            fi
+          fi
+        }
+        
+        # Print configuration
+        echo "Starting DigitalOcean Container Registry cleanup..."
+        echo "Mode: $([ "$DRY_RUN" == "true" ] && echo "DRY RUN" || echo "LIVE")"
+        echo "Keep last $KEEP_COUNT tag(s)"
+        echo "Minimum age: $MIN_AGE_DAYS days"
+        echo "--------------------------------------------------"
+        
+        # Get repositories
+        if [[ -z "$REPOSITORIES" ]]; then
+          echo "Fetching all repositories..."
+          repos=$(doctl registry repository list-v2 --output json | jq -r '.[].name')
+          repo_count=$(echo "$repos" | wc -l)
+          echo "Found $repo_count repositories"
+        else
+          repos=$(echo "$REPOSITORIES" | tr ',' '\n' | tr -d ' ')
+          echo "Processing specified repositories"
+        fi
+        
+        # Process each repository
+        while IFS= read -r repo; do
+          [[ -z "$repo" ]] && continue
+          
+          echo ""
+          echo "Processing repository: $repo"
+          
+          # Get tags for repository
+          tags_json=$(doctl registry repository list-tags "$repo" --output json 2>/dev/null || echo "[]")
+          
+          if [[ "$tags_json" == "[]" ]]; then
+            echo "  No tags found"
+            continue
+          fi
+          
+          # Count total tags
+          tag_count=$(echo "$tags_json" | jq 'length')
+          echo "  Found $tag_count tags"
+          
+          # Sort tags by updated_at (newest first) and process
+          echo "$tags_json" | jq -r 'sort_by(.updated_at) | reverse | to_entries | .[] | "\(.key)|\(.value.tag)|\(.value.updated_at)"' | \
+          while IFS='|' read -r index tag updated_at; do
+            # Calculate age in days
+            age_days=$(days_since "$updated_at")
+            
+            # Determine if we should keep or delete
+            if [[ $index -lt $KEEP_COUNT ]]; then
+              echo "  KEEP: $tag (position: $((index + 1)), age: $age_days days)"
+            elif [[ $age_days -lt $MIN_AGE_DAYS ]]; then
+              echo "  KEEP: $tag (too new: $age_days days old)"
+            else
+              echo "  DELETE: $tag (age: $age_days days)"
+              delete_tag "$repo" "$tag"
+            fi
+          done
+          
+        done <<< "$repos"
+        
+        echo ""
+        echo "Cleanup complete!"
